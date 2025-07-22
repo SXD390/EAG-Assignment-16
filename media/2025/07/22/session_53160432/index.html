@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Color Changer</title>
+<style>
+  .color-button {
+    width: 50px;
+    height: 50px;
+    border: 1px solid black;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div id="colorButtons">
+    <button class="color-button" style="background-color: red;" data-color="red"></button>
+    <button class="color-button" style="background-color: green;" data-color="green"></button>
+    <button class="color-button" style="background-color: blue;" data-color="blue"></button>
+    <button class="color-button" style="background-color: yellow;" data-color="yellow"></button>
+    <button class="color-button" style="background-color: purple;" data-color="purple"></button>
+    <button class="color-button" style="background-color: orange;" data-color="orange"></button>
+  </div>
+
+  <script>
+    const buttons = document.querySelectorAll('.color-button');
+    buttons.forEach(button => {
+      button.addEventListener('click', function() {
+        document.body.style.backgroundColor = this.dataset.color;
+      });
+    });
+  </script>
+</body>
+</html>

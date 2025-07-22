@@ -2,6 +2,8 @@
 
 import networkx as nx
 import asyncio
+import os
+import pathlib
 from agentLoop.contextManager import ExecutionContextManager
 from agentLoop.agents import AgentRunner
 from utils.utils import log_step, log_error
@@ -19,6 +21,126 @@ class AgentLoop4:
         self.multi_mcp = multi_mcp
         self.strategy = strategy
         self.agent_runner = AgentRunner(multi_mcp)
+
+    def _create_session_directory(self, session_id, created_at):
+        """Create media directory structure: media/YYYY/MM/DD/session_<session_id>/"""
+        try:
+            # Parse the created_at timestamp
+            dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            
+            # Create directory path
+            year = dt.strftime('%Y')
+            month = dt.strftime('%m')
+            day = dt.strftime('%d')
+            
+            session_dir = pathlib.Path(f"media/{year}/{month}/{day}/session_{session_id}")
+            session_dir.mkdir(parents=True, exist_ok=True)
+            
+            return session_dir
+        except Exception as e:
+            log_error(f"Failed to create session directory: {e}")
+            return None
+
+    def _write_agent_files(self, session_dir, agent_output, step_id):
+        """Write files from agent output to the session directory"""
+        if not session_dir:
+            return
+            
+        try:
+            # Check for files in output
+            files_written = []
+            
+            # Handle 'files' object in output
+            if 'files' in agent_output and isinstance(agent_output['files'], dict):
+                for filename, content in agent_output['files'].items():
+                    file_path = session_dir / filename
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    files_written.append(str(file_path))
+                    log_step(f"📁 Wrote file: {file_path}")
+            
+            # Handle 'code' object with specific patterns
+            if 'code' in agent_output and isinstance(agent_output['code'], dict):
+                for key, content in agent_output['code'].items():
+                    # Skip non-file code (like function definitions)
+                    if not isinstance(content, str):
+                        continue
+                        
+                    # Determine filename based on key and content
+                    filename = self._determine_filename(key, content, step_id)
+                    if filename:
+                        file_path = session_dir / filename
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        files_written.append(str(file_path))
+                        log_step(f"📁 Wrote file: {file_path}")
+            
+            # Handle FormatterAgent specific outputs
+            formatter_outputs = ['final_format', 'fallback_markdown']
+            for output_key in formatter_outputs:
+                if output_key in agent_output and isinstance(agent_output[output_key], str):
+                    content = agent_output[output_key]
+                    if len(content.strip()) > 50:  # Only write substantial content
+                        if output_key == 'final_format':
+                            filename = f"{step_id}_report.html"
+                        elif output_key == 'fallback_markdown':
+                            filename = f"{step_id}_report.md"
+                        
+                        file_path = session_dir / filename
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        files_written.append(str(file_path))
+                        log_step(f"📁 Wrote file: {file_path}")
+            
+            # Handle task-specific formatted reports (e.g., formatted_report_T004)
+            for key, content in agent_output.items():
+                if key.startswith('formatted_report_') and isinstance(content, str):
+                    if len(content.strip()) > 50:  # Only write substantial content
+                        filename = f"{key}.html"
+                        file_path = session_dir / filename
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        files_written.append(str(file_path))
+                        log_step(f"📁 Wrote file: {file_path}")
+            
+            return files_written
+            
+        except Exception as e:
+            log_error(f"Failed to write agent files: {e}")
+            return []
+
+    def _determine_filename(self, key, content, step_id):
+        """Determine appropriate filename based on key and content"""
+        # Content-based detection
+        content_lower = content.lower().strip()
+        
+        if content_lower.startswith('<!doctype html') or '<html' in content_lower:
+            return f"{step_id}.html"
+        elif 'body {' in content_lower or 'html {' in content_lower:
+            return f"{step_id}.css"
+        elif ('function ' in content_lower or 'document.' in content_lower or 
+              'console.' in content_lower or 'setInterval' in content_lower):
+            return f"{step_id}.js"
+        elif content_lower.startswith('{') and content_lower.endswith('}'):
+            return f"{step_id}.json"
+        
+        # Key-based patterns
+        if 'html' in key.lower():
+            return f"{key}.html"
+        elif 'css' in key.lower():
+            return f"{key}.css"
+        elif 'js' in key.lower() or 'javascript' in key.lower():
+            return f"{key}.js"
+        elif 'json' in key.lower():
+            return f"{key}.json"
+        elif any(ext in key.lower() for ext in ['txt', 'md', 'py', 'php']):
+            return f"{key}"
+        
+        # Default for unrecognized content
+        if len(content.strip()) > 20:  # Only write substantial content
+            return f"{key}.txt"
+        
+        return None
 
     async def run(self, query, file_manifest, globals_schema, uploaded_files):
         # Phase 1: File Profiling (if files exist)
@@ -160,6 +282,15 @@ class AgentLoop4:
         step_data = context.get_step_data(step_id)
         agent_type = step_data["agent"]
         
+        # Create session directory for file output (once per session)
+        if not hasattr(context, 'session_dir'):
+            session_id = context.plan_graph.graph.get('session_id')
+            created_at = context.plan_graph.graph.get('created_at')
+            if session_id and created_at:
+                context.session_dir = self._create_session_directory(session_id, created_at)
+            else:
+                context.session_dir = None
+        
         # Get inputs from NetworkX graph
         inputs = context.get_inputs(step_data.get("reads", []))
         
@@ -201,6 +332,9 @@ class AgentLoop4:
         if result["success"]:
             output = result["output"]
             
+            # Write files to media directory if agent generated files
+            self._write_agent_files(context.session_dir, output, step_id)
+            
             # Check for call_self and handle up to MAX_CALL_SELF_ITERATIONS
             if output.get("call_self"):
                 current_result = result
@@ -232,6 +366,9 @@ class AgentLoop4:
                         iterations_data.append({"iteration": iteration, "output": next_result["output"]})
                         current_result = next_result
                         final_result = next_result
+                        
+                        # Write files for each iteration if agent generated files
+                        self._write_agent_files(context.session_dir, next_result["output"], f"{step_id}_iter{iteration}")
                     else:
                         iterations_data.append({"iteration": iteration, "output": None, "error": next_result.get("error")})
                         final_result = current_result  # Use last successful result

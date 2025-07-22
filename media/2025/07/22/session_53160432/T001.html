@@ -1,0 +1,20 @@
+html_content = '''<!DOCTYPE html>
+<html>
+<head>
+<title>Color Buttons</title>
+</head>
+<body>
+  <div style="display: flex;">
+    <button id="colorButton1" style="background-color: red;">Red</button>
+    <button id="colorButton2" style="background-color: green;">Green</button>
+    <button id="colorButton3" style="background-color: blue;">Blue</button>
+    <button id="colorButton4" style="background-color: yellow;">Yellow</button>
+    <button id="colorButton5" style="background-color: purple;">Purple</button>
+    <button id="colorButton6" style="background-color: orange;">Orange</button>
+  </div>
+</body>
+</html>'''
+
+write_session_file('index.html', html_content)
+print('HTML file created successfully')
+output = {'html_file': 'index.html created'}
